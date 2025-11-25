@@ -1,0 +1,201 @@
+import streamlit as st
+from streamlit_calendar import calendar
+import pandas as pd
+from datetime import datetime, timedelta
+import random
+
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Gestão de Manutenções", layout="wide", page_icon="📅")
+
+# --- 1. BANCO DE DADOS SIMULADO (SESSION STATE) ---
+# Na prática, você substituiria isso por conexão com Google Sheets ou SQL
+if 'db_visitas' not in st.session_state:
+    # Dados iniciais de exemplo
+    st.session_state['db_visitas'] = [
+        {"id": 1, "empresa": "Empresa A", "funcionario": "João", "atividade": "Manutenção AC", "start": "2023-11-20", "end": "2023-11-20"},
+        {"id": 2, "empresa": "Empresa B", "funcionario": "Maria", "atividade": "Pintura", "start": "2023-11-20", "end": "2023-11-21"},
+        {"id": 3, "empresa": "Empresa A", "funcionario": "Pedro", "atividade": "Eletrica", "start": "2023-11-25", "end": "2023-11-25"},
+    ]
+
+# Configuração de Usuários (Login e Cores)
+USUARIOS = {
+    "admin": {"senha": "123", "tipo": "admin", "nome": "Administrador Mestre", "cor": "#000000"},
+    "empresa1": {"senha": "abc", "tipo": "prestador", "nome": "Empresa A", "cor": "#FF6C6C"}, # Vermelho
+    "empresa2": {"senha": "xyz", "tipo": "prestador", "nome": "Empresa B", "cor": "#4CA64C"}, # Verde
+    "empresa3": {"senha": "123", "tipo": "prestador", "nome": "Empresa C", "cor": "#4C4CFF"}, # Azul
+}
+
+# --- 2. FUNÇÕES AUXILIARES ---
+def login():
+    st.markdown("## 🔐 Acesso ao Sistema")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        usuario = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+        if st.button("Entrar"):
+            if usuario in USUARIOS and USUARIOS[usuario]['senha'] == senha:
+                st.session_state['usuario_logado'] = usuario
+                st.session_state['dados_usuario'] = USUARIOS[usuario]
+                st.rerun()
+            else:
+                st.error("Usuário ou senha incorretos.")
+
+def get_eventos(usuario_tipo, nome_empresa):
+    """ Filtra e formata os eventos para o calendário """
+    eventos_formatados = []
+    
+    for visita in st.session_state['db_visitas']:
+        # Lógica de Filtro: Se for admin vê tudo, se não, só vê o seu
+        if usuario_tipo == 'admin' or visita['empresa'] == nome_empresa:
+            
+            # Descobre a cor da empresa dona da visita
+            cor_evento = "#808080" # Cinza padrão
+            for u_key, u_val in USUARIOS.items():
+                if u_val['nome'] == visita['empresa']:
+                    cor_evento = u_val['cor']
+            
+            eventos_formatados.append({
+                "title": f"{visita['atividade']} ({visita['funcionario']})",
+                "start": visita['start'],
+                "end": visita['end'],
+                "backgroundColor": cor_evento,
+                "borderColor": cor_evento,
+                "extendedProps": {
+                    "empresa": visita['empresa'],
+                    "descricao": f"Func: {visita['funcionario']}"
+                }
+            })
+    return eventos_formatados
+
+# --- 3. INTERFACE PRINCIPAL ---
+def main():
+    user = st.session_state['dados_usuario']
+    
+    # Sidebar
+    with st.sidebar:
+        st.title("Painel de Controle")
+        st.write(f"Olá, **{user['nome']}**")
+        st.caption(f"Perfil: {user['tipo'].upper()}")
+        
+        st.divider()
+        
+        # Formulário de Adição Rápida
+        st.subheader("➕ Nova Visita")
+        with st.form("add_visit"):
+            atividade = st.text_input("Atividade")
+            funcionario = st.text_input("Funcionário")
+            data_inicio = st.date_input("Data Início")
+            data_fim = st.date_input("Data Fim")
+            
+            # Se for admin, escolhe a empresa. Se for prestador, é automático.
+            if user['tipo'] == 'admin':
+                lista_empresas = [u['nome'] for k, u in USUARIOS.items() if u['tipo'] != 'admin']
+                empresa_selecionada = st.selectbox("Empresa", lista_empresas)
+            else:
+                empresa_selecionada = user['nome']
+                st.info(f"Agendando para: {empresa_selecionada}")
+                
+            btn_add = st.form_submit_button("Agendar")
+            
+            if btn_add:
+                novo_id = len(st.session_state['db_visitas']) + 1
+                nova_visita = {
+                    "id": novo_id,
+                    "empresa": empresa_selecionada,
+                    "funcionario": funcionario,
+                    "atividade": atividade,
+                    "start": str(data_inicio),
+                    "end": str(data_fim)
+                }
+                st.session_state['db_visitas'].append(nova_visita)
+                st.success("Visita agendada!")
+                st.rerun()
+
+        if st.button("Sair"):
+            del st.session_state['usuario_logado']
+            st.rerun()
+
+    # --- ÁREA CENTRAL (TABS) ---
+    tab1, tab2 = st.tabs(["📅 Calendário Visual", "📋 Lista & Edição"])
+
+    with tab1:
+        st.subheader(f"Calendário de Visitas - {datetime.now().year}")
+        
+        # Opções do Calendário Visual
+        calendar_options = {
+            "editable": True, # Permite arrastar (apenas visual no frontend deste demo)
+            "navLinks": True,
+            "headerToolbar": {
+                "left": "today prev,next",
+                "center": "title",
+                "right": "dayGridMonth,listMonth"
+            },
+            "initialView": "dayGridMonth",
+        }
+        
+        # Busca eventos filtrados
+        events = get_eventos(user['tipo'], user['nome'])
+        
+        # Renderiza o Calendário
+        calendar(events=events, options=calendar_options, key="calendar_view")
+        
+        st.caption("Nota: O Admin vê todas as empresas (cores diferentes). O prestador vê apenas a sua.")
+
+    with tab2:
+        st.subheader("Gerenciar Visitas em Lista")
+        
+        # Prepara dados para o Dataframe
+        df = pd.DataFrame(st.session_state['db_visitas'])
+        
+        # Filtro de visualização na tabela
+        if user['tipo'] != 'admin':
+            df = df[df['empresa'] == user['nome']]
+            
+        # Editor de Dados (Tabela Interativa)
+        # Permite editar direto na célula ou deletar linhas
+        
+        colunas_config = {
+            "empresa": st.column_config.TextColumn("Empresa", disabled=(user['tipo'] != 'admin')),
+            "atividade": st.column_config.TextColumn("Atividade"),
+            "funcionario": st.column_config.TextColumn("Funcionário"),
+            "start": st.column_config.DateColumn("Início", format="YYYY-MM-DD"),
+            "end": st.column_config.DateColumn("Fim", format="YYYY-MM-DD"),
+        }
+
+        edited_df = st.data_editor(
+            df,
+            column_config=colunas_config,
+            num_rows="dynamic", # Permite adicionar/remover linhas
+            use_container_width=True,
+            hide_index=True,
+            key="editor_dados"
+        )
+        
+        # Botão para salvar alterações da tabela
+        if st.button("Salvar Alterações da Tabela"):
+            # Converte o dataframe editado de volta para lista de dicionários
+            # Nota: Converter datas para string para manter padrão JSON
+            edited_df['start'] = edited_df['start'].astype(str)
+            edited_df['end'] = edited_df['end'].astype(str)
+            
+            # Se for prestador, precisamos ter cuidado para não apagar as visitas dos outros
+            # ao salvar o dataframe filtrado.
+            if user['tipo'] == 'admin':
+                st.session_state['db_visitas'] = edited_df.to_dict('records')
+            else:
+                # 1. Pega todas as visitas que NÃO são deste usuário (preserva elas)
+                todas_visitas = pd.DataFrame(st.session_state['db_visitas'])
+                outras_visitas = todas_visitas[todas_visitas['empresa'] != user['nome']]
+                
+                # 2. Junta com as visitas editadas deste usuário
+                df_final = pd.concat([outras_visitas, edited_df], ignore_index=True)
+                st.session_state['db_visitas'] = df_final.to_dict('records')
+                
+            st.success("Dados atualizados com sucesso!")
+            st.rerun()
+
+# --- CONTROLE DE FLUXO ---
+if 'usuario_logado' not in st.session_state:
+    login()
+else:
+    main()
